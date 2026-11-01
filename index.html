@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Cardboard VR Donut Pass-Through Environment</title>
+
+    <!-- Tailwind CSS for UI controls -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Three.js Library & StereoEffect for Cardboard VR -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/effects/StereoEffect.js"></script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        body, html {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #000;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+
+        /* 3D WebGL Canvas Container */
+        #vr-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        /* Webcam Background Feeds for Pass-Through AR */
+        .webcam-feed {
+            position: absolute;
+            top: 0;
+            object-fit: cover;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* Standard View Single Camera */
+        #webcam-single {
+            left: 0;
+            display: block;
+        }
+
+        /* Stereo Mode Dual Camera Views */
+        #webcam-left, #webcam-right {
+            display: none;
+            width: 50%;
+            height: 100%;
+        }
+
+        #webcam-left {
+            left: 0;
+            border-right: 1px solid #111;
+        }
+
+        #webcam-right {
+            left: 50%;
+        }
+
+        /* VR Mode Layout Styles */
+        body.vr-active #webcam-single {
+            display: none;
+        }
+
+        body.vr-active #webcam-left,
+        body.vr-active #webcam-right {
+            display: block;
+        }
+
+        /* Gaze Crosshair Reticles */
+        .gaze-container {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            z-index: 30;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #reticle-single {
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: flex;
+        }
+
+        #reticle-left {
+            left: 25%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+
+        #reticle-right {
+            left: 75%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+
+        body.vr-active #reticle-single {
+            display: none;
+        }
+
+        body.vr-active #reticle-left,
+        body.vr-active #reticle-right {
+            display: flex;
+        }
+
+        /* Gaze Ring & Center Dot */
+        .reticle-dot {
+            width: 8px;
+            height: 8px;
+            background-color: #00e5ff;
+            border-radius: 50%;
+            position: absolute;
+            box-shadow: 0 0 8px #00e5ff;
+            transition: transform 0.2s ease, background-color 0.2s ease;
+        }
+
+        .reticle-dot.active {
+            background-color: #ff4081;
+            box-shadow: 0 0 12px #ff4081;
+            transform: scale(1.5);
+        }
+
+        .gaze-progress-svg {
+            width: 50px;
+            height: 50px;
+            transform: rotate(-90deg);
+        }
+
+        .gaze-progress-bg {
+            fill: none;
+            stroke: rgba(255, 255, 255, 0.2);
+            stroke-width: 4;
+        }
+
+        .gaze-progress-stroke {
+            fill: none;
+            stroke: #00e5ff;
+            stroke-width: 4;
+            stroke-dasharray: 100;
+            stroke-dashoffset: 100;
+            transition: stroke-dashoffset 0.05s linear;
+        }
+
+        /* Center VR Divider Line */
+        #vr-divider {
+            position: absolute;
+            left: 50%;
+            top: 0;
+            width: 2px;
+            height: 100%;
+            background-color: #000;
+            z-index: 25;
+            display: none;
+        }
+    </style>
+</head>
+<body class="bg-black text-white overflow-hidden select-none">
+
+    <!-- Pass-Through Rear Webcam Elements -->
+    <video id="webcam-single" class="webcam-feed" autoplay playsinline muted></video>
+    <video id="webcam-left" class="webcam-feed" autoplay playsinline muted></video>
+    <video id="webcam-right" class="webcam-feed" autoplay playsinline muted></video>
+
+    <!-- Cardboard Divider Line -->
+    <div id="vr-divider"></div>
+
+    <!-- WebGL 3D Canvas Container -->
+    <div id="vr-container"></div>
+
+    <!-- Center Reticle / Gaze Cursor (Standard View) -->
+    <div id="reticle-single" class="gaze-container">
+        <svg class="gaze-progress-svg">
+            <circle class="gaze-progress-bg" cx="25" cy="25" r="16"></circle>
+            <circle class="gaze-progress-stroke" cx="25" cy="25" r="16"></circle>
+        </svg>
+        <div class="reticle-dot"></div>
+    </div>
+
+    <!-- Center Reticles / Gaze Cursor (Stereo VR Left Eye) -->
+    <div id="reticle-left" class="gaze-container">
+        <svg class="gaze-progress-svg">
+            <circle class="gaze-progress-bg" cx="25" cy="25" r="16"></circle>
+            <circle class="gaze-progress-stroke" cx="25" cy="25" r="16"></circle>
+        </svg>
+        <div class="reticle-dot"></div>
+    </div>
+
+    <!-- Center Reticles / Gaze Cursor (Stereo VR Right Eye) -->
+    <div id="reticle-right" class="gaze-container">
+        <svg class="gaze-progress-svg">
+            <circle class="gaze-progress-bg" cx="25" cy="25" r="16"></circle>
+            <circle class="gaze-progress-stroke" cx="25" cy="25" r="16"></circle>
+        </svg>
+        <div class="reticle-dot"></div>
+    </div>
+
+    <!-- Overlay Controls & HUD -->
+    <div id="hud-overlay" class="absolute inset-0 z-40 pointer-events-none flex flex-col justify-between p-4">
+        <!-- Top Status Bar -->
+        <div class="flex justify-between items-center w-full max-w-4xl mx-auto pointer-events-auto">
+            <div class="bg-black/60 backdrop-blur-md border border-white/20 rounded-xl px-4 py-2 flex items-center gap-3">
+                <i class="fa-solid fa-glasses text-cyan-400"></i>
+                <span class="font-bold text-sm tracking-wider uppercase">Cardboard VR AR</span>
+            </div>
+
+            <!-- VR Toggle Button -->
+            <button id="btn-vr-toggle" class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-4 py-2 rounded-xl shadow-lg border border-indigo-400/30 flex items-center gap-2 transition active:scale-95">
+                <i class="fa-solid fa-[#vr-cardboard] fa-vr-cardboard"></i>
+                <span id="vr-btn-text">Stereo VR View</span>
+            </button>
+        </div>
+
+        <!-- Center Move Countdown Banner -->
+        <div id="countdown-banner" class="hidden self-center bg-purple-900/80 backdrop-blur-md border border-purple-400/50 text-purple-200 px-6 py-3 rounded-2xl shadow-2xl text-center flex items-center gap-3 animate-pulse">
+            <i class="fa-solid fa-crosshairs text-purple-400 text-xl"></i>
+            <div>
+                <p class="font-bold text-sm uppercase">Repositioning Donut</p>
+                <p class="text-xs text-purple-300">Aim target! Moving in <span id="timer-sec" class="font-black text-white text-base">3</span>s...</p>
+            </div>
+        </div>
+
+        <!-- Bottom Stats Bar & Controls -->
+        <div class="flex justify-between items-end w-full max-w-4xl mx-auto pointer-events-auto">
+            <!-- HUD Info -->
+            <div class="bg-black/60 backdrop-blur-md border border-white/20 rounded-xl p-3 flex flex-col gap-1 text-xs">
+                <div class="flex items-center gap-2 text-gray-300">
+                    <span class="text-cyan-400 font-bold">Bounce Speed:</span>
+                    <span id="speed-display" class="font-mono text-white">1.00x</span>
+                </div>
+                <div class="flex items-center gap-2 text-gray-300">
+                    <span class="text-emerald-400 font-bold">Bounce Range:</span>
+                    <span id="range-display" class="font-mono text-white">0.50m</span>
+                </div>
+                <div class="flex items-center gap-2 text-gray-300">
+                    <span class="text-amber-400 font-bold">Spinning:</span>
+                    <span id="spin-display" class="font-mono text-white">OFF</span>
+                </div>
+                <div class="flex items-center gap-2 text-gray-300">
+                    <span class="text-purple-400 font-bold">Target Position:</span>
+                    <span id="pos-display" class="font-mono text-white">0.00, 0.00</span>
+                </div>
+            </div>
+
+            <!-- Camera Toggle Button -->
+            <button id="btn-camera" class="bg-gray-800/80 hover:bg-gray-700 text-white p-3 rounded-xl border border-white/20 shadow-md active:scale-95 transition">
+                <i class="fa-solid fa-video"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Camera Error Modal -->
+    <div id="camera-modal" class="hidden fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4">
+        <div class="bg-gray-900 border border-red-500/30 rounded-2xl p-6 max-w-md text-center">
+            <i class="fa-solid fa-camera text-red-500 text-4xl mb-3"></i>
+            <h3 class="text-xl font-bold mb-2">Rear Camera Access</h3>
+            <p class="text-sm text-gray-300 mb-4">Please grant permission to access your back camera for pass-through AR in Cardboard VR mode.</p>
+            <button id="btn-close-modal" class="bg-red-600 hover:bg-red-500 text-white font-bold px-5 py-2 rounded-xl transition">Got it</button>
+        </div>
+    </div>
+
+    <script>
+        // Core State Variables
+        let scene, camera, renderer, stereoEffect;
+        let donutGroup, donut, donutMaterial;
+        let basePosition = new THREE.Vector3(0, 0, -2.5);
+        let bounceAmplitude = 0.5; // Up and down range distance
+        let animationSpeed = 1.0;  // Speed multiplier
+        let isSpinning = false;     // Donut spinning rotation toggle (Off by default)
+        let bounceTime = 0;
+        let isVRMode = false;
+
+        // Gaze Dwell System State
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0); // Always center screen
+        const interactiveObjects = [];
+        let hoveredObject = null;
+        let gazeStartTime = 0;
+        const GAZE_DWELL_DURATION = 1500; // 1.5s gaze completion time
+
+        // Repositioning Countdown State
+        let isRepositioning = false;
+        let countdownTimer = 3;
+        let countdownInterval = null;
+
+        // DOM Elements
+        const container = document.getElementById('vr-container');
+        const webcamSingle = document.getElementById('webcam-single');
+        const webcamLeft = document.getElementById('webcam-left');
+        const webcamRight = document.getElementById('webcam-right');
+        const btnVR = document.getElementById('btn-vr-toggle');
+        const vrBtnText = document.getElementById('vr-btn-text');
+        const vrDivider = document.getElementById('vr-divider');
+        const speedDisplay = document.getElementById('speed-display');
+        const rangeDisplay = document.getElementById('range-display');
+        const spinDisplay = document.getElementById('spin-display');
+        const posDisplay = document.getElementById('pos-display');
+        const countdownBanner = document.getElementById('countdown-banner');
+        const timerSec = document.getElementById('timer-sec');
+        const btnCamera = document.getElementById('btn-camera');
+        const cameraModal = document.getElementById('camera-modal');
+        const btnCloseModal = document.getElementById('btn-close-modal');
+
+        const gazeProgressEls = document.querySelectorAll('.gaze-progress-svg');
+        const gazeStrokes = document.querySelectorAll('.gaze-progress-stroke');
+        const reticleDots = document.querySelectorAll('.reticle-dot');
+
+        // Request Rear Camera Stream
+        async function initWebcam() {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: { exact: "environment" },
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                };
+
+                let stream;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                } catch (e) {
+                    // Fallback to standard environment facingMode if exact constraint fails
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: "environment" },
+                        audio: false
+                    });
+                }
+
+                webcamSingle.srcObject = stream;
+                webcamLeft.srcObject = stream;
+                webcamRight.srcObject = stream;
+
+                webcamSingle.style.transform = 'none';
+                webcamLeft.style.transform = 'none';
+                webcamRight.style.transform = 'none';
+            } catch (err) {
+                console.warn('Rear webcam stream unavailable or permission denied:', err);
+                cameraModal.classList.remove('hidden');
+            }
+        }
+
+        // Create the 3D Donut Mesh
+        function createDonut() {
+            donutGroup = new THREE.Group();
+
+            // Main outer torus geometry
+            const geometry = new THREE.TorusGeometry(0.35, 0.14, 30, 80);
+            donutMaterial = new THREE.MeshPhongMaterial({
+                color: 0xff4081,
+                emissive: 0x4a0026,
+                specular: 0xffffff,
+                shininess: 90,
+                wireframe: false
+            });
+            donut = new THREE.Mesh(geometry, donutMaterial);
+            donutGroup.add(donut);
+
+            // Inner ambient glow ring
+            const innerGeo = new THREE.TorusGeometry(0.34, 0.05, 16, 60);
+            const innerMat = new THREE.MeshBasicMaterial({
+                color: 0x00e5ff,
+                transparent: true,
+                opacity: 0.85
+            });
+            const innerRing = new THREE.Mesh(innerGeo, innerMat);
+            donutGroup.add(innerRing);
+
+            // Set initial base target position in front of camera
+            basePosition.set(0, 0, -2.5);
+            donutGroup.position.copy(basePosition);
+
+            scene.add(donutGroup);
+        }
+
+        // Helper function to create interactive 3D VR buttons
+        function create3DButton(text, x, y, z, colorHex, callback) {
+            const buttonGroup = new THREE.Group();
+
+            // Button base plate
+            const geometry = new THREE.BoxGeometry(0.45, 0.22, 0.06);
+            const material = new THREE.MeshPhongMaterial({
+                color: colorHex,
+                emissive: 0x111122,
+                specular: 0xaaaaaa,
+                shininess: 40
+            });
+            const buttonMesh = new THREE.Mesh(geometry, material);
+            buttonGroup.add(buttonMesh);
+
+            // Glowing border frame
+            const edges = new THREE.EdgesGeometry(geometry);
+            const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 2 });
+            const borderLines = new THREE.LineSegments(edges, lineMat);
+            buttonGroup.add(borderLines);
+
+            // Canvas texture for 3D label text
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.font = 'Bold 42px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, 128, 64);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const textGeo = new THREE.PlaneGeometry(0.42, 0.2);
+            const textMat = new THREE.MeshBasicMaterial({
+                map: texture,
+                transparent: true
+            });
+            const textMesh = new THREE.Mesh(textGeo, textMat);
+            textMesh.position.z = 0.035;
+            buttonGroup.add(textMesh);
+
+            buttonGroup.position.set(x, y, z);
+            buttonGroup.userData = {
+                onClick: callback,
+                baseColor: colorHex,
+                mesh: buttonMesh
+            };
+
+            scene.add(buttonGroup);
+            interactiveObjects.push(buttonMesh);
+        }
+
+        // Initialize 3D UI Panel with controls in front of user camera
+        function createVRMenu() {
+            // Panel container floating under donut position
+            create3DButton("+ Speed", -0.75, -0.9, -2.5, 0x3b82f6, () => modifySpeed(0.25));
+            create3DButton("- Speed", -0.25, -0.9, -2.5, 0xef4444, () => modifySpeed(-0.25));
+            create3DButton("+ Range", 0.25, -0.9, -2.5, 0x10b981, () => modifyRange(0.1));
+            create3DButton("- Range", 0.75, -0.9, -2.5, 0xf59e0b, () => modifyRange(-0.1));
+            create3DButton("Move 3s", -0.35, -1.25, -2.5, 0x8b5cf6, startMoveCountdown);
+            create3DButton("Spin: OFF", 0.35, -1.25, -2.5, 0xd97706, toggleSpin);
+        }
+
+        // Initialize Three.js Scene and World
+        function initScene() {
+            scene = new THREE.Scene();
+
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setClearColor(0x000000, 0); // Transparent background for webcam overlay
+            container.appendChild(renderer.domElement);
+
+            stereoEffect = new THREE.StereoEffect(renderer);
+            stereoEffect.setSize(window.innerWidth, window.innerHeight);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+            scene.add(ambientLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 1.2, 50);
+            pointLight.position.set(2, 4, 3);
+            scene.add(pointLight);
+
+            // Construct 3D elements
+            createDonut();
+            createVRMenu();
+
+            // Window resize handler
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function modifySpeed(delta) {
+            animationSpeed = Math.max(0.1, Math.min(5.0, animationSpeed + delta));
+            speedDisplay.textContent = `${animationSpeed.toFixed(2)}x`;
+        }
+
+        function modifyRange(delta) {
+            bounceAmplitude = Math.max(0.1, Math.min(2.0, bounceAmplitude + delta));
+            rangeDisplay.textContent = `${bounceAmplitude.toFixed(2)}m`;
+        }
+
+        function toggleSpin() {
+            isSpinning = !isSpinning;
+            spinDisplay.textContent = isSpinning ? 'ON' : 'OFF';
+            
+            // Find and update the Spin 3D button label texture
+            interactiveObjects.forEach(obj => {
+                const group = obj.parent;
+                if (group && group.children[2]) {
+                    const textMesh = group.children[2];
+                    if (textMesh.material && textMesh.material.map) {
+                        const canvas = textMesh.material.map.image;
+                        if (canvas && canvas.getContext) {
+                            const ctx = canvas.getContext('2d');
+                            const text = `Spin: ${isSpinning ? 'ON' : 'OFF'}`;
+                            ctx.clearRect(0, 0, 256, 128);
+                            ctx.fillStyle = 'white';
+                            ctx.font = 'Bold 42px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(text, 128, 64);
+                            textMesh.material.map.needsUpdate = true;
+                        }
+                    }
+                }
+            });
+        }
+
+        function startMoveCountdown() {
+            if (isRepositioning) return;
+            isRepositioning = true;
+            countdownTimer = 3;
+            timerSec.textContent = countdownTimer;
+            countdownBanner.classList.remove('hidden');
+
+            countdownInterval = setInterval(() => {
+                countdownTimer--;
+                timerSec.textContent = countdownTimer;
+                if (countdownTimer <= 0) {
+                    clearInterval(countdownInterval);
+                    repositionDonutToGaze();
+                    countdownBanner.classList.add('hidden');
+                    isRepositioning = false;
+                }
+            }, 1000);
+        }
+
+        function repositionDonutToGaze() {
+            // Project target coordinates 2.5 meters in front of current camera gaze point
+            const targetVec = new THREE.Vector3(0, 0, -2.5);
+            targetVec.applyQuaternion(camera.quaternion);
+            targetVec.add(camera.position);
+
+            basePosition.copy(targetVec);
+            posDisplay.textContent = `${basePosition.x.toFixed(2)}, ${basePosition.y.toFixed(2)}`;
+        }
+
+        // Handles Hands-Free Gaze Dwell clicking when targeting 3D buttons
+        function updateGazeRaycast(timestamp) {
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(interactiveObjects);
+
+            if (intersects.length > 0) {
+                const hitMesh = intersects[0].object;
+                const buttonGroup = hitMesh.parent;
+
+                if (hoveredObject !== buttonGroup) {
+                    resetGazeState();
+                    hoveredObject = buttonGroup;
+                    gazeStartTime = timestamp;
+
+                    reticleDots.forEach(dot => dot.classList.add('active'));
+                    gazeProgressEls.forEach(el => el.style.display = 'block');
+
+                    // Scale feedback on hover
+                    buttonGroup.scale.set(1.1, 1.1, 1.1);
+                } else {
+                    // Calculate gaze dwell progress
+                    const elapsed = timestamp - gazeStartTime;
+                    const progressPercent = Math.min(100, (elapsed / GAZE_DWELL_DURATION) * 100);
+                    const strokeOffset = 100 - progressPercent;
+
+                    gazeStrokes.forEach(stroke => stroke.style.strokeDashoffset = strokeOffset);
+
+                    if (elapsed >= GAZE_DWELL_DURATION) {
+                        // Trigger button action on full dwell completion
+                        if (buttonGroup.userData && buttonGroup.userData.onClick) {
+                            buttonGroup.userData.onClick();
+                        }
+                        resetGazeState();
+                    }
+                }
+            } else {
+                resetGazeState();
+            }
+        }
+
+        function resetGazeState() {
+            if (hoveredObject) {
+                hoveredObject.scale.set(1.0, 1.0, 1.0);
+                hoveredObject = null;
+            }
+            gazeStartTime = 0;
+            reticleDots.forEach(dot => dot.classList.remove('active'));
+            gazeProgressEls.forEach(el => el.style.display = 'none');
+            gazeStrokes.forEach(stroke => stroke.style.strokeDashoffset = '100');
+        }
+
+        function toggleVRMode() {
+            isVRMode = !isVRMode;
+            if (isVRMode) {
+                document.body.classList.add('vr-active');
+                vrDivider.style.display = 'block';
+                vrBtnText.textContent = 'Standard View';
+            } else {
+                document.body.classList.remove('vr-active');
+                vrDivider.style.display = 'none';
+                vrBtnText.textContent = 'Stereo VR View';
+            }
+            onWindowResize();
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            stereoEffect.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // Animation Render Loop
+        function animate(timestamp) {
+            requestAnimationFrame(animate);
+
+            // Animate Donut Movement: Straight Up and Down vertical oscillation
+            bounceTime += 0.016 * animationSpeed;
+            const yOffsetY = Math.sin(bounceTime) * bounceAmplitude;
+
+            if (donutGroup) {
+                donutGroup.position.x = basePosition.x;
+                donutGroup.position.y = basePosition.y + yOffsetY;
+                donutGroup.position.z = basePosition.z;
+
+                // Rotate donut only if spinning is enabled
+                if (isSpinning) {
+                    donut.rotation.x += 0.01;
+                    donut.rotation.y += 0.015;
+                }
+            }
+
+            // Perform Raycasting Gaze Dwell Detection
+            updateGazeRaycast(timestamp);
+
+            // Render scene according to Stereo or Standard view mode
+            if (isVRMode) {
+                stereoEffect.render(scene, camera);
+            } else {
+                renderer.render(scene, camera);
+            }
+        }
+
+        // Keyboard Controls Shortcuts
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') modifySpeed(0.25);
+            if (e.key === 'ArrowDown') modifySpeed(-0.25);
+            if (e.key === '[') modifyRange(-0.1);
+            if (e.key === ']') modifyRange(0.1);
+            if (e.key === 'm' || e.key === 'M') startMoveCountdown();
+            if (e.key === 's' || e.key === 'S') toggleSpin();
+        });
+
+        // UI Event Listeners
+        btnVR.addEventListener('click', toggleVRMode);
+        btnCamera.addEventListener('click', initWebcam);
+        btnCloseModal.addEventListener('click', () => cameraModal.classList.add('hidden'));
+
+        // Initialize on page load
+        window.onload = function () {
+            initScene();
+            initWebcam();
+            animate(0);
+        };
+    </script>
+</body>
+</html>
